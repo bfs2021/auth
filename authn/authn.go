@@ -77,25 +77,42 @@ type staticEntry struct {
 	tok  Token
 }
 
+// bearerCredential splits an authorization header into its scheme and
+// credential. HTTP auth scheme names are case-insensitive (RFC 7235), and
+// some clients or proxies lowercase the scheme or add whitespace. The scheme
+// is not secret, so EqualFold is fine here; the credential is returned for
+// the caller to compare in constant time.
+func bearerCredential(header string) (string, bool) {
+	fields := strings.Fields(header)
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "bearer") {
+		return "", false
+	}
+	return fields[1], true
+}
+
 // NewStatic builds a StaticProvider from a tokens map.
 func NewStatic(tokens map[string]Token) StaticProvider {
 	entries := make([]staticEntry, 0, len(tokens))
 	for t, tok := range tokens {
-		entries = append(entries, staticEntry{want: []byte("Bearer " + t), tok: tok})
+		entries = append(entries, staticEntry{want: []byte(t), tok: tok})
 	}
 	return StaticProvider{entries: entries}
 }
 
 func (p StaticProvider) Authenticate(_ context.Context, header string) (Identity, error) {
-	got := []byte(header)
-	ok := false
+	credential, ok := bearerCredential(header)
+	if !ok {
+		return Identity{}, ErrUnrecognized
+	}
+	got := []byte(credential)
+	found := false
 	var tok Token
 	for _, e := range p.entries { // no early break: keep timing independent of which key matches
 		if subtle.ConstantTimeCompare(got, e.want) == 1 {
-			ok, tok = true, e.tok
+			found, tok = true, e.tok
 		}
 	}
-	if !ok {
+	if !found {
 		return Identity{}, ErrUnrecognized
 	}
 	if !tok.Expires.IsZero() && time.Now().After(tok.Expires) {
@@ -118,7 +135,7 @@ func NewJWKS(url string) JWKSProvider {
 }
 
 func (p JWKSProvider) Authenticate(_ context.Context, header string) (Identity, error) {
-	raw, found := strings.CutPrefix(header, "Bearer ")
+	raw, found := bearerCredential(header)
 	if !found || strings.Count(raw, ".") != 2 {
 		return Identity{}, ErrUnrecognized
 	}

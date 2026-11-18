@@ -90,3 +90,15 @@ func TestWriteGrant(t *testing.T) {
 		t.Error("auth-disabled must permit writes")
 	}
 }
+
+func TestBearerSchemeCaseInsensitive(t *testing.T) {
+	tokens := map[string]Token{"s3cret": {Write: true}}
+	for _, header := range []string{"Bearer s3cret", "bearer s3cret", "BEARER s3cret", "  Bearer   s3cret  "} {
+		if ok, _, _ := call(tokens, header); !ok {
+			t.Errorf("header %q should authenticate", header)
+		}
+	}
+	if ok, _, _ := call(tokens, "Basic s3cret"); ok {
+		t.Error("a non-bearer scheme must still be rejected")
+	}
+}
